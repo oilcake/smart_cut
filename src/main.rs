@@ -1,26 +1,34 @@
-use std::env;
+use clap::Parser;
+use failure::Error;
+mod saw;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let file = &args[1];
-    let output = std::process::Command::new("ffprobe")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-select_streams")
-        .arg("v:0")
-        .arg("-show_entries")
-        .arg("packet=pts_time,flags")
-        .arg("-of")
-        .arg("csv=print_section=0")
-        .arg(file)
-        .output()
-        .expect("failed");
+/// CLI arguments
+#[derive(Parser, Debug)]
+#[command(name = "smart_cut")]
+#[command(author = "Your Name")]
+#[command(version = "0.1")]
+#[command(about = "Keyframe boundary extractor for video trimming")]
+pub struct Args {
+    /// Input video file path
+    #[arg(short, long)]
+    pub input: String,
 
-    println!("================================================================================");
-    println!("{}", output.status);
-    println!("{:?}", output.stdout);
-    let s = String::from_utf8_lossy(&output.stderr);
-    for line in s.lines() {
-        println!("{}", &line);
-    }
+    /// Start time in seconds
+    #[arg(long)]
+    pub start: f64,
+
+    /// End time in seconds
+    #[arg(long)]
+    pub end: f64,
+}
+
+fn main() -> Result<(), Error> {
+    let args = Args::parse();
+
+    let mut saw = saw::Saw::new(&args.input, args.start, args.end).unwrap();
+    saw.seek()?;
+
+    dbg!(saw);
+
+    Ok(())
 }
