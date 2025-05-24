@@ -1,6 +1,8 @@
 use clap::Parser;
 use failure::Error;
 mod saw;
+mod command;
+mod copy;
 
 /// CLI arguments
 #[derive(Parser, Debug)]
@@ -12,6 +14,9 @@ pub struct Args {
     /// Input video file path
     #[arg(short, long)]
     pub input: String,
+
+    #[arg(short, long)]
+    pub output: String,
 
     /// Start time in seconds
     #[arg(long)]
@@ -28,7 +33,14 @@ fn main() -> Result<(), Error> {
     let mut saw = saw::Saw::new(&args.input, args.start, args.end).unwrap();
     saw.seek()?;
 
-    dbg!(saw);
+    dbg!(&saw);
+
+    copy::remux_with_seek(
+        &args.input,
+        &args.output,
+        saw.first_kf.unwrap(),
+        saw.last_kf.unwrap(),
+    )?;
 
     Ok(())
 }
