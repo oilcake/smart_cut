@@ -10,15 +10,34 @@ pub fn remux_with_seek(
     ffmpeg_next::util::log::set_level(ffmpeg_next::util::log::Level::Debug);
 
     let mut ictx = ffmpeg_next::format::input(&input)?;
+    // Выводим информацию о потоках для диагностики
+    for stream in ictx.streams() {
+        println!("Input stream {}: type {:?}, codec {:?}", 
+            stream.index(),
+            stream.parameters().medium(),
+            stream.parameters().id());
+    }
     let mut octx = ffmpeg_next::format::output(&output)?;
 
-    // Создаем маппинг всех потоков (включая видео)
     let mut stream_map = std::collections::HashMap::new();
+    // Создаем маппинг всех потоков (включая видео)
     for istream in ictx.streams() {
+        let codec_id = istream.parameters().id();
+        
+        // Пропускаем неподдерживаемые кодеки
+        if !is_codec_supported_in_mp4(codec_id) {
+            println!("Skipping stream {} with unsupported codec {:?}", 
+                istream.index(), codec_id);
+            continue;
+        }
+        
         let idx = istream.index();
-        let mut ostream = octx.add_stream(istream.parameters().id())?;
+        let mut ostream = octx.add_stream(codec_id)?;
         ostream.set_parameters(istream.parameters());
         stream_map.insert(idx, ostream.index());
+        
+        println!("Mapping stream {} -> {} (codec {:?})", 
+            idx, ostream.index(), codec_id);
     }
 
     // Получаем видео поток для seek
@@ -74,4 +93,14 @@ pub fn remux_with_seek(
 // Вспомогательная функция для конвертации AVRational в f64
 fn av_q2d(r: ffmpeg_next::util::rational::Rational) -> f64 {
     r.numerator() as f64 / r.denominator() as f64
+}
+
+fn is_codec_supported_in_mp4(codec_id: ffmpeg_next::codec::Id) -> bool {
+    match codec_id {
+        ffmpeg_next::codec::Id::H264 |
+        ffmpeg_next::codec::Id::H265 |
+        ffmpeg_next::codec::Id::AAC |
+        ffmpeg_next::codec::Id::MP3 => true,
+        _ => false,
+    }
 }
