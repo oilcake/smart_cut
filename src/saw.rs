@@ -14,9 +14,9 @@ struct Boundaries {
 
 pub struct Saw {
     ictx: format::context::Input,
-    start: f64,
-    first_kf: Option<f64>,
-    last_kf: Option<f64>,
+    pub start: f64,
+    pub first_kf: Option<f64>,
+    pub last_kf: Option<f64>,
     end: f64,
 }
 
