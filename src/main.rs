@@ -35,11 +35,11 @@ fn main() -> Result<(), Error> {
 
     dbg!(&saw);
 
-    copy::remux_with_seek(
+    command::copy_video_fragment(
         &args.input,
         &args.output,
         saw.first_kf.unwrap(),
-        saw.last_kf.unwrap(),
+        saw.last_kf.unwrap() - saw.first_kf.unwrap()
     )?;
 
     Ok(())
