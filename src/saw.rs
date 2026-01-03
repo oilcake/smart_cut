@@ -1,5 +1,5 @@
 use failure::Error;
-use ffmpeg::{format, media::Type};
+use ffmpeg::{codec, format, media, media::Type};
 use ffmpeg_next as ffmpeg;
 
 enum Direction {
@@ -45,8 +45,10 @@ impl Saw {
         })
     }
     pub fn seek(&mut self) -> Result<(), Error> {
-        self.first_kf = self.find_closest_keyframe_inside_boundaries(self.start, Direction::Forward)?;
-        self.last_kf = self.find_closest_keyframe_inside_boundaries(self.end, Direction::Backward)?;
+        self.first_kf =
+            self.find_closest_keyframe_inside_boundaries(self.start, Direction::Forward)?;
+        self.last_kf =
+            self.find_closest_keyframe_inside_boundaries(self.end, Direction::Backward)?;
         Ok(())
     }
 
