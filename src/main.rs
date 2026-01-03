@@ -1,15 +1,12 @@
 use clap::Parser;
-use failure::Error;
 mod saw;
-mod command;
-mod copy;
 
 /// CLI arguments
 #[derive(Parser, Debug)]
 #[command(name = "smart_cut")]
-#[command(author = "Your Name")]
+#[command(author = "oilcake")]
 #[command(version = "0.1")]
-#[command(about = "Keyframe boundary extractor for video trimming")]
+#[command(about = "Almost lossless video cutter", long_about = None)]
 pub struct Args {
     /// Input video file path
     #[arg(short, long)]
@@ -27,10 +24,10 @@ pub struct Args {
     pub end: f64,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let mut saw = saw::Saw::new(&args.input, args.start, args.end).unwrap();
+    let mut saw = saw::Saw::new(&args.input, &args.output, args.start, args.end).unwrap();
     saw.seek()?;
 
     dbg!(&saw);
