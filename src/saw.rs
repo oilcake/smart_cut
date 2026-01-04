@@ -208,7 +208,6 @@ impl Saw {
             let tb = stream.time_base();
             let pts = packet.pts().unwrap_or(0);
             let time = pts as f64 * f64::from(tb);
-            let pts_time = packet.pts().unwrap_or(0) as f64 * f64::from(stream.time_base());
 
             if time < start {
                 continue;
@@ -233,6 +232,24 @@ impl Saw {
             packet.write_interleaved(&mut self.octx).unwrap();
         }
 
+        Ok(())
+    }
+
+    fn reencode_between_timestamps(&mut self) {
+    println!("reencode_between_timestamps");
+
+}
+
+    pub fn saw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.first_kf.is_some() {
+            self.reencode_between_timestamps();
+        }
+        if self.first_kf.is_some() && self.last_kf.is_some() {
+            self.copy_packets_between_keyframes()?;
+        }
+        if self.last_kf.is_some() {
+            self.reencode_between_timestamps();
+        }
         self.octx.write_trailer()?;
         Ok(())
     }

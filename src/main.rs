@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     dbg!(&saw);
 
-    saw.copy_packets_between_keyframes()?;
+    saw.saw()?;
 
     Ok(())
 }
