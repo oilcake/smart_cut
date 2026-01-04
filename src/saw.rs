@@ -74,6 +74,22 @@ impl Saw {
         })
     }
 
+    /// Main function that does everything
+    pub fn saw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.first_kf.is_some() {
+            self.reencode_between_timestamps();
+        }
+        if self.first_kf.is_some() && self.last_kf.is_some() {
+            self.copy_packets_between_keyframes()?;
+        }
+        if self.last_kf.is_some() {
+            self.reencode_between_timestamps();
+        }
+        self.octx.write_trailer()?;
+        Ok(())
+    }
+
+    /// Fills first_kf and last_kf during initialization
     pub fn seek(&mut self) -> Result<(), Error> {
         self.first_kf =
             self.find_closest_keyframe_inside_boundaries(self.start, Direction::Forward)?;
@@ -82,6 +98,7 @@ impl Saw {
         Ok(())
     }
 
+    /// Does actual work in keyframe seeking
     fn find_closest_keyframe_inside_boundaries(
         &mut self,
         target_time_seconds: f64,
@@ -163,9 +180,11 @@ impl Saw {
     //     Ok(())
     // }
 
+    /// Copies packets between first and last keyframe, that's the lossless part
     pub fn copy_packets_between_keyframes(&mut self) -> Result<(), ffmpeg::Error> {
         // Берём time_base видео как опорный
-        let video_stream = self.ictx
+        let video_stream = self
+            .ictx
             .streams()
             .best(ffmpeg::media::Type::Video)
             .ok_or(ffmpeg::Error::StreamNotFound)?;
@@ -235,22 +254,8 @@ impl Saw {
         Ok(())
     }
 
+    /// Reencodes everything else, that does not fall between first and last keyframe
     fn reencode_between_timestamps(&mut self) {
-    println!("reencode_between_timestamps");
-
-}
-
-    pub fn saw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.first_kf.is_some() {
-            self.reencode_between_timestamps();
-        }
-        if self.first_kf.is_some() && self.last_kf.is_some() {
-            self.copy_packets_between_keyframes()?;
-        }
-        if self.last_kf.is_some() {
-            self.reencode_between_timestamps();
-        }
-        self.octx.write_trailer()?;
-        Ok(())
+        println!("reencode_between_timestamps");
     }
 }
