@@ -93,8 +93,19 @@ impl Saw {
     pub fn seek(&mut self) -> Result<(), Error> {
         self.first_kf =
             self.find_closest_keyframe_inside_boundaries(self.start, Direction::Forward)?;
-        self.last_kf =
-            self.find_closest_keyframe_inside_boundaries(self.end, Direction::Backward)?;
+        if self.first_kf.is_none() {
+            // that means we don't have keyframes in given range at all
+            // both are ok to be left as None
+            return Ok(());
+        }
+        if let Some(last_kf) =
+            self.find_closest_keyframe_inside_boundaries(self.end, Direction::Backward)?
+        {
+            // unwrap is safe because the value is checked above
+            if last_kf != self.first_kf.unwrap() {
+                self.last_kf = Some(last_kf)
+            }
+        }
         Ok(())
     }
 
@@ -149,69 +160,23 @@ impl Saw {
         Ok(None)
     }
 
-    // pub fn copy_between_keyframes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    //     if self.first_kf.is_none() || self.last_kf.is_none() {
-    //         panic!("No first or last keyframe found");
-    //     }
-    //     let fragment = Fragment {
-    //         start: self.first_kf.unwrap() as i64,
-    //         end: self.last_kf.unwrap() as i64,
-    //     };
-    //     self.ictx
-    //         .seek(self.first_kf.unwrap() as i64, fragment)
-    //         .expect("Failed to seek");
-    //
-    //     let video_stream_index = self
-    //         .ictx
-    //         .streams()
-    //         .best(Type::Video)
-    //         .ok_or(ffmpeg::Error::StreamNotFound)?
-    //         .index();
-    //
-    //     // Read packets forward until we find the first keyframe
-    //     for (stream, mut packet) in self.ictx.packets() {
-    //         if stream.index() != video_stream_index {
-    //             continue;
-    //         }
-    //
-    //         packet.set_stream(video_stream_index);
-    //         self.octx.stream(video_stream_index);
-    //     }
-    //     Ok(())
-    // }
-
     /// Copies packets between first and last keyframe, that's the lossless part
     pub fn copy_packets_between_keyframes(&mut self) -> Result<(), ffmpeg::Error> {
-        // Берём time_base видео как опорный
-        let video_stream = self
-            .ictx
-            .streams()
-            .best(ffmpeg::media::Type::Video)
-            .ok_or(ffmpeg::Error::StreamNotFound)?;
-
-        let vindex = video_stream.index();
-        let v_tb = video_stream.time_base();
+        assert!(
+            self.first_kf.is_some() && self.last_kf.is_some(),
+            "I can't do that without both first_kf and last_kf, man"
+        );
 
         let start = self.first_kf.unwrap();
         let end = self.last_kf.unwrap();
 
-        let start_ts = (start / f64::from(v_tb)) as i64;
-        let end_ts = (end / f64::from(v_tb)) as i64;
-
-        // Seek строго к keyframe ≤ start
-        unsafe {
-            ffmpeg::ffi::av_seek_frame(
-                self.ictx.as_mut_ptr(),
-                vindex as i32,
-                start_ts,
-                ffmpeg::ffi::AVSEEK_FLAG_BACKWARD,
-            );
-        }
-
-        // Flush после seek
-        unsafe {
-            ffmpeg::ffi::avformat_flush(self.ictx.as_mut_ptr());
-        }
+        let fragment = Fragment {
+            start: self.first_kf.unwrap() as i64,
+            end: self.last_kf.unwrap() as i64,
+        };
+        self.ictx
+            .seek(self.first_kf.unwrap() as i64, fragment)
+            .expect("Failed to seek");
 
         // Запоминаем стартовые DTS для каждого стрима
         let mut first_dts: Vec<Option<i64>> = vec![None; self.ictx.streams().len()];
@@ -225,7 +190,12 @@ impl Saw {
             }
 
             let tb = stream.time_base();
-            let pts = packet.pts().unwrap_or(0);
+
+            let pts = packet
+                .pts()
+                .or_else(|| packet.dts())
+                .ok_or(ffmpeg::Error::InvalidData)?;
+
             let time = pts as f64 * f64::from(tb);
 
             if time < start {
