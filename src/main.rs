@@ -1,5 +1,8 @@
 use clap::Parser;
+mod codec;
 mod saw;
+
+use ffmpeg_next as ffmpeg;
 
 /// CLI arguments
 #[derive(Parser, Debug)]
@@ -25,6 +28,8 @@ pub struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ffmpeg::init()?;
+    ffmpeg::log::set_level(ffmpeg::log::Level::Debug);
     let args = Args::parse();
 
     let mut saw = saw::Saw::new(&args.input, &args.output, args.start, args.end).unwrap();
