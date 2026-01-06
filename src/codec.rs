@@ -1,17 +1,20 @@
 use ffmpeg_next::{self as ffmpeg};
 
+pub(crate) struct VideoCodec {
+    pub decoder: ffmpeg::decoder::Video,
+    pub encoder: ffmpeg::encoder::video::Video,
+    pub in_time_base: ffmpeg::Rational,
+    pub out_time_base: ffmpeg::Rational,
+}
+
+pub(crate) struct AudioCodec {
+    pub decoder: ffmpeg::decoder::Audio,
+    pub encoder: ffmpeg::encoder::audio::Audio,
+    pub in_time_base: ffmpeg::Rational,
+    pub out_time_base: ffmpeg::Rational,
+}
 pub(crate) enum StreamCodec {
-    Video {
-        decoder: ffmpeg::decoder::Video,
-        encoder: ffmpeg::encoder::video::Video,
-        in_time_base: ffmpeg::Rational,
-        out_time_base: ffmpeg::Rational,
-    },
-    Audio {
-        decoder: ffmpeg::decoder::Audio,
-        encoder: ffmpeg::encoder::audio::Audio,
-        in_time_base: ffmpeg::Rational,
-        out_time_base: ffmpeg::Rational,
-    },
+    Video(VideoCodec),
+    Audio(AudioCodec),
     Other, // subtitles / data
 }
