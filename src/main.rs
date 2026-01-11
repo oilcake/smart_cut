@@ -3,9 +3,7 @@ mod reencoder;
 mod saw;
 
 use reencoder::Transcoder;
-use reencoder::DEFAULT_X264_OPTS;
 use std::collections::HashMap;
-use std::env::args;
 
 use ffmpeg::{codec, encoder, format, log, media, Rational};
 use ffmpeg_next as ffmpeg;
@@ -111,7 +109,6 @@ impl Saw2 {
                         &ist,
                         &mut self.octx,
                         ost_index as _,
-                        // x264_opts.to_owned(),
                         Some(ist_index) == best_video_stream_index,
                     )
                     .unwrap(),
