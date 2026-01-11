@@ -1,4 +1,3 @@
-use crate::codec::{AudioCodec, StreamCodec, VideoCodec};
 use std::usize;
 
 use ffmpeg_next::{
@@ -6,13 +5,14 @@ use ffmpeg_next::{
     format::{self},
     media::Type,
     util::range::Range,
-    Error, Rescale,
+    Error,
 };
 
 enum Direction {
     Forward,
     Backward,
 }
+#[derive(Debug)]
 struct Fragment {
     start: i64,
     end: i64,
@@ -35,7 +35,6 @@ pub struct Saw {
     pub first_kf: Option<f64>,
     pub last_kf: Option<f64>,
     end: f64,
-    codecs: Vec<Option<StreamCodec>>,
 }
 
 impl std::fmt::Debug for Saw {
@@ -60,9 +59,9 @@ impl std::fmt::Debug for Saw {
 impl Saw {
     pub fn new(input: &str, output: &str, start: f64, end: f64) -> Result<Self, Error> {
         let ictx = format::input(&input)?;
+        format::context::input::dump(&ictx, 0, Some(&input));
         let mut octx = format::output(&output)?;
         let mut stream_map = Vec::with_capacity(ictx.nb_streams() as usize);
-        let mut codecs: Vec<Option<StreamCodec>> = Vec::with_capacity(ictx.nb_streams() as usize);
         for istream in ictx.streams() {
             let codec_id = istream.parameters().id();
             let codec = ffmpeg::codec::decoder::find(codec_id).unwrap();
@@ -72,50 +71,6 @@ impl Saw {
             let mut ostream = octx.add_stream(codec)?;
             ostream.set_parameters(params.clone());
             stream_map.insert(idx, ostream.index() as usize);
-            // find decoder
-            let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(params.clone())?;
-            let decoder = decoder_ctx.decoder();
-            // and timebase
-            let tb = istream.time_base();
-
-            match decoder.medium() {
-                ffmpeg::media::Type::Video => {
-                    let dec = decoder.video()?;
-
-                    let mut enc_ctx = ffmpeg::codec::context::Context::new();
-                    enc_ctx.set_parameters(params)?;
-                    let enc = enc_ctx.encoder().video()?;
-
-                    let stream_codec = Some(StreamCodec::Video(VideoCodec {
-                        decoder: dec,
-                        encoder: enc,
-                        in_time_base: tb,
-                        out_time_base: tb,
-                    }));
-                    codecs.insert(idx, stream_codec);
-                }
-
-                ffmpeg::media::Type::Audio => {
-                    let dec = decoder.audio()?;
-
-                    let mut enc_ctx = ffmpeg::codec::context::Context::new();
-                    enc_ctx.set_parameters(params)?;
-                    let enc = enc_ctx.encoder().audio()?;
-
-                    let stream_codec = Some(StreamCodec::Audio(AudioCodec {
-                        decoder: dec,
-                        encoder: enc,
-                        in_time_base: tb,
-                        out_time_base: tb,
-                    }));
-                    codecs.insert(idx, stream_codec);
-                }
-
-                _ => {
-                    let stream_codec = Some(StreamCodec::Other);
-                    codecs.insert(idx, stream_codec);
-                }
-            }
         }
         octx.write_header()?;
         Ok(Saw {
@@ -126,22 +81,20 @@ impl Saw {
             first_kf: None,
             last_kf: None,
             end,
-            codecs,
         })
     }
 
     /// Main function that does everything
     pub fn saw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(first_kf) = self.first_kf {
-            self.reencode_between_timestamps(self.start, first_kf)
-                .unwrap();
-        }
+        // if let Some(first_kf) = self.first_kf {
+        //     reencode_between_timestamps(self.start, first_kf, &mut self.ictx, &mut self.octx)?;
+        // }
         if self.first_kf.is_some() && self.last_kf.is_some() {
             self.copy_packets_between_keyframes()?;
         }
-        if let Some(last_kf) = self.last_kf {
-            self.reencode_between_timestamps(last_kf, self.end).unwrap();
-        }
+        // if let Some(last_kf) = self.last_kf {
+        //     self.reencode_between_timestamps(last_kf, self.end).unwrap();
+        // }
         self.octx.write_trailer()?;
         Ok(())
     }
@@ -228,9 +181,10 @@ impl Saw {
         let end = self.last_kf.unwrap();
 
         let fragment = Fragment {
-            start: self.first_kf.unwrap() as i64,
-            end: self.last_kf.unwrap() as i64,
+            start: self.first_kf.unwrap() as _,
+            end: self.last_kf.unwrap() as _,
         };
+        println!("Fragment {:?}", fragment);
         self.ictx
             .seek(self.first_kf.unwrap() as i64, fragment)
             .expect("Failed to seek");
@@ -253,7 +207,10 @@ impl Saw {
                 .or_else(|| packet.dts())
                 .ok_or(ffmpeg::Error::InvalidData)?;
 
+            eprintln!("Packet pts: {}", pts);
             let time = pts as f64 * f64::from(tb);
+            eprintln!("Stream timebase: {}", f64::from(tb));
+            eprintln!("Packet time: {}", time);
 
             if time < start {
                 continue;
@@ -280,142 +237,9 @@ impl Saw {
 
         Ok(())
     }
-
-    /// Reencodes everything else, that does not fall between first and last keyframe
-    fn reencode_between_timestamps(
-        &mut self,
-        start: f64,
-        end: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("reencode_between_timestamps");
-
-        for (stream, packet) in self.ictx.packets() {
-            let stream_id = stream.index();
-            let out_stream_id = self.stream_map[stream_id];
-
-            let Some(codec) = &mut self.codecs[stream_id] else {
-                continue;
-            };
-
-            match codec {
-                StreamCodec::Video(video_codec) => {
-                    process_video_packet(
-                        video_codec,
-                        start,
-                        end,
-                        &packet,
-                        out_stream_id,
-                        &mut self.octx,
-                    )
-                    .unwrap();
-                }
-
-                StreamCodec::Audio(audio_codec) => {
-                    process_audio_packet(
-                        audio_codec,
-                        start,
-                        end,
-                        &packet,
-                        out_stream_id,
-                        &mut self.octx,
-                    )
-                    .unwrap();
-                }
-
-                StreamCodec::Other => {
-                    // можно remux без реэнкода
-                    packet.write_interleaved(&mut self.octx).unwrap();
-                }
-            }
-        }
-        Ok(())
-    }
 }
 // rescale helper
 fn seconds_to_pts(sec: f64, tb: ffmpeg::Rational) -> i64 {
     let ftb: f64 = tb.into();
     (sec / ftb).round() as i64
-}
-
-fn process_video_packet(
-    video_codec: &mut VideoCodec,
-    start: f64,
-    end: f64,
-    packet: &ffmpeg::Packet,
-    out_stream_index: usize,
-    octx: &mut ffmpeg::format::context::Output,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let start_pts = seconds_to_pts(start, video_codec.in_time_base);
-    let end_pts = seconds_to_pts(end, video_codec.in_time_base);
-
-    video_codec.decoder.send_packet(packet)?;
-
-    let mut frame = ffmpeg::frame::Video::empty();
-    while video_codec.decoder.receive_frame(&mut frame).is_ok() {
-        let Some(pts) = frame.pts() else {
-            continue;
-        };
-
-        if pts < start_pts {
-            continue;
-        }
-
-        if pts > end_pts {
-            break;
-        }
-
-        let new_pts = Some(pts.rescale(video_codec.in_time_base, video_codec.out_time_base));
-        frame.set_pts(new_pts);
-
-        video_codec.encoder.send_frame(&frame)?;
-
-        let mut out = ffmpeg::Packet::empty();
-        while video_codec.encoder.receive_packet(&mut out).is_ok() {
-            out.set_stream(out_stream_index);
-            out.write_interleaved(octx)?;
-        }
-    }
-    Ok(())
-}
-fn process_audio_packet(
-    audio_codec: &mut AudioCodec,
-    start: f64,
-    end: f64,
-    packet: &ffmpeg::Packet,
-    out_stream_index: usize,
-    octx: &mut ffmpeg::format::context::Output,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let start_pts = seconds_to_pts(start, audio_codec.in_time_base);
-    let end_pts = seconds_to_pts(end, audio_codec.in_time_base);
-
-    audio_codec.decoder.send_packet(packet)?;
-
-    let mut frame = ffmpeg::frame::Audio::empty();
-    while audio_codec.decoder.receive_frame(&mut frame).is_ok() {
-        let Some(pts) = frame.pts() else {
-            continue;
-        };
-
-        let frame_end = pts + frame.samples() as i64;
-
-        if frame_end < start_pts {
-            continue;
-        }
-
-        if pts > end_pts {
-            break;
-        }
-
-        let new_pts = Some(pts.rescale(audio_codec.in_time_base, audio_codec.out_time_base));
-        frame.set_pts(new_pts);
-
-        audio_codec.encoder.send_frame(&frame)?;
-
-        let mut out = ffmpeg::Packet::empty();
-        while audio_codec.encoder.receive_packet(&mut out).is_ok() {
-            out.set_stream(out_stream_index);
-            out.write_interleaved(octx)?;
-        }
-    }
-    Ok(())
 }
