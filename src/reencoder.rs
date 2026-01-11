@@ -43,7 +43,7 @@ impl Transcoder {
         ist: &format::stream::Stream,
         octx: &mut format::context::Output,
         ost_index: usize,
-        x264_opts: Dictionary,
+        // x264_opts: Dictionary,
         enable_logging: bool,
     ) -> Result<Self, ffmpeg::Error> {
         let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
@@ -51,7 +51,7 @@ impl Transcoder {
             .decoder()
             .video()?;
 
-        let codec = encoder::find(codec::Id::H264);
+        let codec = encoder::find(decoder.codec().unwrap().id());
         let mut ost = octx.add_stream(codec)?;
 
         let mut encoder =
@@ -71,7 +71,8 @@ impl Transcoder {
         }
 
         let opened_encoder = encoder
-            .open_with(x264_opts)
+            .open()
+            // .open_with(x264_opts)
             .expect("error opening x264 with supplied settings");
         ost.set_parameters(&opened_encoder);
         Ok(Self {

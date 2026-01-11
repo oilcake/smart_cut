@@ -1,7 +1,7 @@
 input := "/Users/oilcake/code/voop/smart_cut/samples/jt.mp4"
 output := "/Users/oilcake/code/voop/smart_cut/output/cropped.mp4"
-start := "55.0"
-end := "68.7"
+start := "0"
+end := "3.99"
 
 try:
 	# cargo run -- --input {{input}} --start 55.0 --end 189.0

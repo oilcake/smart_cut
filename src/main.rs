@@ -5,6 +5,7 @@ mod saw;
 use reencoder::Transcoder;
 use reencoder::DEFAULT_X264_OPTS;
 use std::collections::HashMap;
+use std::env::args;
 
 use ffmpeg::{codec, encoder, format, log, media, Rational};
 use ffmpeg_next as ffmpeg;
@@ -34,22 +35,20 @@ pub struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-//
-//     let mut saw = saw::Saw::new(&args.input, &args.output, args.start, args.end).unwrap();
-//     saw.seek()?;
-//
-//     dbg!(&saw);
-//
-//     saw.saw()?;
-//
-//     Ok(())
-// }
+    //
+    //     let mut saw = saw::Saw::new(&args.input, &args.output, args.start, args.end).unwrap();
+    //     saw.seek()?;
+    //
+    //     dbg!(&saw);
+    //
+    //     saw.saw()?;
+    //
+    //     Ok(())
+    // }
     let input_file = &args.input;
     let output_file = &args.output;
-    let x264_opts = reencoder::parse_opts(
-            DEFAULT_X264_OPTS.to_string()
-    )
-    .expect("invalid x264 options string");
+    let x264_opts =
+        reencoder::parse_opts(DEFAULT_X264_OPTS.to_string()).expect("invalid x264 options string");
 
     eprintln!("x264 options: {:?}", x264_opts);
 
@@ -89,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &ist,
                     &mut octx,
                     ost_index as _,
-                    x264_opts.to_owned(),
+                    // x264_opts.to_owned(),
                     Some(ist_index) == best_video_stream_index,
                 )
                 .unwrap(),
@@ -116,11 +115,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ost_time_bases[ost_index] = octx.stream(ost_index as _).unwrap().time_base();
     }
 
+    let start = args.start;
+    let end = args.end;
+
+    // let fragment = Fragment {
+    //     start: self.first_kf.unwrap() as _,
+    //     end: self.last_kf.unwrap() as _,
+    // };
+    // println!("Fragment {:?}", fragment);
+    ictx.seek(start as i64, ..(start as i64))
+        .expect("Failed to seek");
+
+    let mut first_dts: Vec<Option<i64>> = vec![None; ictx.streams().len()];
     for (stream, mut packet) in ictx.packets() {
         let ist_index = stream.index();
         let ost_index = stream_mapping[ist_index];
         if ost_index < 0 {
             continue;
+        }
+        let tb = stream.time_base();
+
+        let pts = packet
+            .pts()
+            .or_else(|| packet.dts())
+            .ok_or(ffmpeg::Error::InvalidData)?;
+
+        let time = pts as f64 * f64::from(tb);
+
+        if time < start {
+            continue;
+        }
+        if time > end {
+            break;
+        }
+
+        // Инициализация first_dts
+        let base = first_dts[ist_index].get_or_insert(packet.dts().unwrap_or(0));
+
+        // Сдвигаем timestamps
+        if let Some(pts) = packet.pts() {
+            packet.set_pts(Some(pts - *base));
+        }
+        if let Some(dts) = packet.dts() {
+            packet.set_dts(Some(dts - *base));
         }
         let ost_time_base = ost_time_bases[ost_index as usize];
         match transcoders.get_mut(&ist_index) {
