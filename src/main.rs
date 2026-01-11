@@ -138,11 +138,6 @@ impl Saw2 {
             ost_time_bases[ost_index] = self.octx.stream(ost_index as _).unwrap().time_base();
         }
 
-        // let fragment = Fragment {
-        //     start: self.first_kf.unwrap() as _,
-        //     end: self.last_kf.unwrap() as _,
-        // };
-        // println!("Fragment {:?}", fragment);
         self.ictx
             .seek(start as i64, ..(start as i64))
             .expect("Failed to seek");
