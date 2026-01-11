@@ -47,10 +47,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // }
     let input_file = &args.input;
     let output_file = &args.output;
-    let x264_opts =
-        reencoder::parse_opts(DEFAULT_X264_OPTS.to_string()).expect("invalid x264 options string");
-
-    eprintln!("x264 options: {:?}", x264_opts);
 
     ffmpeg::init().unwrap();
     log::set_level(log::Level::Info);
@@ -60,6 +56,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     format::context::input::dump(&ictx, 0, Some(&input_file));
 
+    reencode_between_timestamps(&mut ictx, &mut octx, args.start, args.end)?;
+
+    octx.write_trailer().unwrap();
+    Ok(())
+}
+
+fn reencode_between_timestamps(
+    ictx: &mut ffmpeg::format::context::Input,
+    octx: &mut ffmpeg::format::context::Output,
+    start: f64,
+    end: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
     let best_video_stream_index = ictx
         .streams()
         .best(media::Type::Video)
@@ -86,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ist_index,
                 Transcoder::new(
                     &ist,
-                    &mut octx,
+                    octx,
                     ost_index as _,
                     // x264_opts.to_owned(),
                     Some(ist_index) == best_video_stream_index,
@@ -108,15 +116,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     octx.set_metadata(ictx.metadata().to_owned());
-    format::context::output::dump(&octx, 0, Some(&output_file));
+    // format::context::output::dump(&octx, 0, Some(&output_file));
     octx.write_header().unwrap();
 
     for (ost_index, _) in octx.streams().enumerate() {
         ost_time_bases[ost_index] = octx.stream(ost_index as _).unwrap().time_base();
     }
-
-    let start = args.start;
-    let end = args.end;
 
     // let fragment = Fragment {
     //     start: self.first_kf.unwrap() as _,
@@ -163,14 +168,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match transcoders.get_mut(&ist_index) {
             Some(transcoder) => {
                 transcoder.send_packet_to_decoder(&packet);
-                transcoder.receive_and_process_decoded_frames(&mut octx, ost_time_base);
+                transcoder.receive_and_process_decoded_frames(octx, ost_time_base);
             }
             None => {
                 // Do stream copy on non-video streams.
                 packet.rescale_ts(ist_time_bases[ist_index], ost_time_base);
                 packet.set_position(-1);
                 packet.set_stream(ost_index as _);
-                packet.write_interleaved(&mut octx).unwrap();
+                packet.write_interleaved(octx).unwrap();
             }
         }
     }
@@ -179,11 +184,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (ost_index, transcoder) in transcoders.iter_mut() {
         let ost_time_base = ost_time_bases[*ost_index];
         transcoder.send_eof_to_decoder();
-        transcoder.receive_and_process_decoded_frames(&mut octx, ost_time_base);
+        transcoder.receive_and_process_decoded_frames(octx, ost_time_base);
         transcoder.send_eof_to_encoder();
-        transcoder.receive_and_process_encoded_packets(&mut octx, ost_time_base);
+        transcoder.receive_and_process_encoded_packets(octx, ost_time_base);
     }
-
-    octx.write_trailer().unwrap();
     Ok(())
 }

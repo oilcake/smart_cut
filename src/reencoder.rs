@@ -43,7 +43,6 @@ impl Transcoder {
         ist: &format::stream::Stream,
         octx: &mut format::context::Output,
         ost_index: usize,
-        // x264_opts: Dictionary,
         enable_logging: bool,
     ) -> Result<Self, ffmpeg::Error> {
         let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
