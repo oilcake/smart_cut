@@ -97,12 +97,14 @@ impl Saw2 {
             stream_mapping[in_str_index] = out_str_index;
             in_str_time_bases[in_str_index] = ist.time_base();
             if in_str_medium == media::Type::Video {
+                let mut ost = octx.add_stream(encoder::find(codec::Id::None)).unwrap();
                 // Initialize transcoder for video stream.
                 transcoders.insert(
                     in_str_index,
                     Transcoder::new(
                         &ist,
-                        &mut octx,
+                        // &mut octx,
+                        &mut ost,
                         out_str_index as _,
                         Some(in_str_index) == best_video_stream_index,
                     )

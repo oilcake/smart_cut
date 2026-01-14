@@ -20,7 +20,7 @@ extern crate ffmpeg_next as ffmpeg;
 use std::time::Instant;
 
 use ffmpeg::{
-    codec, decoder, encoder, format, frame, picture, Packet, Rational,
+    codec, decoder, encoder, format, frame, picture, Packet, Rational, StreamMut
 };
 
 pub(crate) struct Transcoder {
@@ -38,17 +38,17 @@ pub(crate) struct Transcoder {
 impl Transcoder {
     pub(crate) fn new(
         ist: &format::stream::Stream,
-        octx: &mut format::context::Output,
+        // octx: &mut format::context::Output,
+        ost: &mut StreamMut,
         ost_index: usize,
         enable_logging: bool,
     ) -> Result<Self, ffmpeg::Error> {
-        let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
+        // let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
         let decoder = ffmpeg::codec::context::Context::from_parameters(ist.parameters())?
             .decoder()
             .video()?;
 
         let codec = encoder::find(decoder.codec().unwrap().id());
-        let mut ost = octx.add_stream(codec)?;
 
         let mut encoder =
             codec::context::Context::new_with_codec(codec.ok_or(ffmpeg::Error::InvalidData)?)
@@ -62,9 +62,9 @@ impl Transcoder {
         encoder.set_frame_rate(decoder.frame_rate());
         encoder.set_time_base(ist.time_base());
 
-        if global_header {
-            encoder.set_flags(codec::Flags::GLOBAL_HEADER);
-        }
+        // if global_header {
+        //     encoder.set_flags(codec::Flags::GLOBAL_HEADER);
+        // }
 
         let opened_encoder = encoder
             .open()
