@@ -72,7 +72,10 @@ struct Saw2 {
 }
 
 impl Saw2 {
-    fn new(ictx: ffmpeg::format::context::Input, mut octx: ffmpeg::format::context::Output) -> Self {
+    fn new(
+        ictx: ffmpeg::format::context::Input,
+        mut octx: ffmpeg::format::context::Output,
+    ) -> Self {
         let best_video_stream_index = ictx
             .streams()
             .best(media::Type::Video)
@@ -97,19 +100,33 @@ impl Saw2 {
             stream_mapping[in_str_index] = out_str_index;
             in_str_time_bases[in_str_index] = ist.time_base();
             if in_str_medium == media::Type::Video {
-                let mut ost = octx.add_stream(encoder::find(codec::Id::None)).unwrap();
+                let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
+                let decoder = ffmpeg::codec::context::Context::from_parameters(ist.parameters())
+                    .unwrap()
+                    .decoder()
+                    .video()
+                    .unwrap();
+                let codec = encoder::find(decoder.codec().unwrap().id());
+                let mut ost = octx.add_stream(codec).unwrap();
+                let encoder = codec::context::Context::new_with_codec(
+                    codec.ok_or(ffmpeg::Error::InvalidData).unwrap(),
+                )
+                .encoder()
+                .video()
+                .unwrap();
+                ost.set_parameters(&encoder);
+                let transcoder = Transcoder::new(
+                    &ist,
+                    // &mut octx,
+                    // &mut ost,
+                    out_str_index as _,
+                    Some(in_str_index) == best_video_stream_index,
+                    global_header,
+                )
+                .unwrap();
+                ost.set_parameters(transcoder.encoder());
                 // Initialize transcoder for video stream.
-                transcoders.insert(
-                    in_str_index,
-                    Transcoder::new(
-                        &ist,
-                        // &mut octx,
-                        &mut ost,
-                        out_str_index as _,
-                        Some(in_str_index) == best_video_stream_index,
-                    )
-                    .unwrap(),
-                );
+                transcoders.insert(in_str_index, transcoder);
             } else {
                 // Set up for stream copy for non-video stream.
                 let mut ost = octx.add_stream(encoder::find(codec::Id::None)).unwrap();
@@ -148,7 +165,6 @@ impl Saw2 {
         start: f64,
         end: f64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-
         self.ictx
             .seek(start as i64, ..(start as i64))
             .expect("Failed to seek");

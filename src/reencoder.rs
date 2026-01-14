@@ -20,7 +20,7 @@ extern crate ffmpeg_next as ffmpeg;
 use std::time::Instant;
 
 use ffmpeg::{
-    codec, decoder, encoder, format, frame, picture, Packet, Rational, StreamMut
+    codec, decoder, encoder, format, frame, picture, Packet, Rational
 };
 
 pub(crate) struct Transcoder {
@@ -39,11 +39,11 @@ impl Transcoder {
     pub(crate) fn new(
         ist: &format::stream::Stream,
         // octx: &mut format::context::Output,
-        ost: &mut StreamMut,
+        // ost: &mut StreamMut,
         ost_index: usize,
         enable_logging: bool,
+        global_header: bool
     ) -> Result<Self, ffmpeg::Error> {
-        // let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
         let decoder = ffmpeg::codec::context::Context::from_parameters(ist.parameters())?
             .decoder()
             .video()?;
@@ -54,7 +54,7 @@ impl Transcoder {
             codec::context::Context::new_with_codec(codec.ok_or(ffmpeg::Error::InvalidData)?)
                 .encoder()
                 .video()?;
-        ost.set_parameters(&encoder);
+        // ost.set_parameters(&encoder);
         encoder.set_height(decoder.height());
         encoder.set_width(decoder.width());
         encoder.set_aspect_ratio(decoder.aspect_ratio());
@@ -62,15 +62,14 @@ impl Transcoder {
         encoder.set_frame_rate(decoder.frame_rate());
         encoder.set_time_base(ist.time_base());
 
-        // if global_header {
-        //     encoder.set_flags(codec::Flags::GLOBAL_HEADER);
-        // }
+        if global_header {
+            encoder.set_flags(codec::Flags::GLOBAL_HEADER);
+        }
 
         let opened_encoder = encoder
             .open()
             // .open_with(x264_opts)
             .expect("error opening x264 with supplied settings");
-        ost.set_parameters(&opened_encoder);
         Ok(Self {
             ost_index,
             decoder,
@@ -82,6 +81,9 @@ impl Transcoder {
             starting_time: Instant::now(),
             last_log_time: Instant::now(),
         })
+    }
+    pub(crate) fn encoder(&self) -> &encoder::Video {
+        &self.encoder
     }
 
     pub(crate) fn send_packet_to_decoder(&mut self, packet: &Packet) {
