@@ -55,6 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     format::context::input::dump(&ictx, 0, Some(&input_file));
 
     let mut saw2 = Saw2::new(ictx, octx);
+    saw2.setup_transcoders();
+    saw2.write_header();
 
     saw2.reencode_between_timestamps(args.start, args.end)?;
 
@@ -76,14 +78,10 @@ impl Saw2 {
         ictx: ffmpeg::format::context::Input,
         mut octx: ffmpeg::format::context::Output,
     ) -> Self {
-        let best_video_stream_index = ictx
-            .streams()
-            .best(media::Type::Video)
-            .map(|stream| stream.index());
         let mut stream_mapping: Vec<isize> = vec![0; ictx.nb_streams() as _];
         let mut in_str_time_bases = vec![Rational(0, 0); ictx.nb_streams() as _];
-        let mut out_str_time_bases = vec![Rational(0, 0); ictx.nb_streams() as _];
-        let mut transcoders = HashMap::new();
+        let out_str_time_bases = vec![Rational(0, 0); ictx.nb_streams() as _];
+        let transcoders = HashMap::new();
         let mut out_str_index = 0;
         for ist in ictx.streams() {
             let in_str_index = ist.index();
@@ -100,7 +98,6 @@ impl Saw2 {
             stream_mapping[in_str_index] = out_str_index;
             in_str_time_bases[in_str_index] = ist.time_base();
             if in_str_medium == media::Type::Video {
-                let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
                 let decoder = ffmpeg::codec::context::Context::from_parameters(ist.parameters())
                     .unwrap()
                     .decoder()
@@ -115,18 +112,6 @@ impl Saw2 {
                 .video()
                 .unwrap();
                 ost.set_parameters(&encoder);
-                let transcoder = Transcoder::new(
-                    &ist,
-                    // &mut octx,
-                    // &mut ost,
-                    out_str_index as _,
-                    Some(in_str_index) == best_video_stream_index,
-                    global_header,
-                )
-                .unwrap();
-                ost.set_parameters(transcoder.encoder());
-                // Initialize transcoder for video stream.
-                transcoders.insert(in_str_index, transcoder);
             } else {
                 // Set up for stream copy for non-video stream.
                 let mut ost = octx.add_stream(encoder::find(codec::Id::None)).unwrap();
@@ -141,12 +126,6 @@ impl Saw2 {
             out_str_index += 1;
         }
 
-        octx.set_metadata(ictx.metadata().to_owned());
-        // format::context::output::dump(&octx, 0, Some(&output_file));
-        octx.write_header().unwrap();
-        for (ost_index, _) in octx.streams().enumerate() {
-            out_str_time_bases[ost_index] = octx.stream(ost_index as _).unwrap().time_base();
-        }
         Saw2 {
             ictx,
             octx,
@@ -154,6 +133,51 @@ impl Saw2 {
             out_str_time_bases,
             stream_mapping,
             transcoders: transcoders,
+        }
+    }
+    fn setup_transcoders(&mut self) {
+        let best_video_stream_index = self.ictx
+            .streams()
+            .best(media::Type::Video)
+            .map(|stream| stream.index());
+        for ist in self.ictx.streams() {
+            let in_str_index = ist.index();
+            let in_str_medium = ist.parameters().medium();
+            // rule out unsupported streams
+            if in_str_medium != media::Type::Audio
+                && in_str_medium != media::Type::Video
+                && in_str_medium != media::Type::Subtitle
+            {
+                continue;
+            }
+            let out_str_index = self.stream_mapping[in_str_index];
+            let global_header = self
+                .octx
+                .format()
+                .flags()
+                .contains(format::Flags::GLOBAL_HEADER);
+            if in_str_medium == media::Type::Video {
+                let transcoder = Transcoder::new(
+                    &ist,
+                    out_str_index as _,
+                    Some(in_str_index) == best_video_stream_index,
+                    global_header,
+                )
+                .unwrap();
+                let mut ost = self.octx.stream_mut(out_str_index as _).unwrap();
+                ost.set_parameters(transcoder.encoder());
+                // Initialize transcoder for video stream.
+                self.transcoders.insert(in_str_index, transcoder);
+            }
+        }
+    }
+    pub(crate) fn write_header(&mut self) {
+        self.octx.set_metadata(self.ictx.metadata().to_owned());
+        // format::context::output::dump(&octx, 0, Some(&output_file));
+        self.octx.write_header().unwrap();
+        for (ost_index, _) in self.octx.streams().enumerate() {
+            self.out_str_time_bases[ost_index] =
+                self.octx.stream(ost_index as _).unwrap().time_base();
         }
     }
     fn finalize(&mut self) {
