@@ -3,7 +3,7 @@ mod reencoder;
 mod saw;
 
 use reencoder::Transcoder;
-use std::collections::HashMap;
+use std::{collections::HashMap, isize};
 
 use ffmpeg::{codec, encoder, format, log, media, Rational};
 use ffmpeg_next as ffmpeg;
@@ -65,32 +65,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct Saw2 {
     ictx: ffmpeg::format::context::Input,
     octx: ffmpeg::format::context::Output,
+    in_str_time_bases: Vec<Rational>,
+    out_str_time_bases: Vec<Rational>,
+    stream_mapping: Vec<isize>,
+    transcoders: HashMap<usize, Transcoder>,
 }
 
 impl Saw2 {
-    fn new(ictx: ffmpeg::format::context::Input, octx: ffmpeg::format::context::Output) -> Self {
-        Saw2 { ictx, octx }
-    }
-    fn finalize(&mut self) {
-        self.octx.write_trailer().unwrap();
-    }
-
-    fn reencode_between_timestamps(
-        &mut self,
-        start: f64,
-        end: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let best_video_stream_index = self
-            .ictx
+    fn new(ictx: ffmpeg::format::context::Input, mut octx: ffmpeg::format::context::Output) -> Self {
+        let best_video_stream_index = ictx
             .streams()
             .best(media::Type::Video)
             .map(|stream| stream.index());
-        let mut stream_mapping: Vec<isize> = vec![0; self.ictx.nb_streams() as _];
-        let mut in_str_time_bases = vec![Rational(0, 0); self.ictx.nb_streams() as _];
-        let mut out_str_time_bases = vec![Rational(0, 0); self.ictx.nb_streams() as _];
+        let mut stream_mapping: Vec<isize> = vec![0; ictx.nb_streams() as _];
+        let mut in_str_time_bases = vec![Rational(0, 0); ictx.nb_streams() as _];
+        let mut out_str_time_bases = vec![Rational(0, 0); ictx.nb_streams() as _];
         let mut transcoders = HashMap::new();
         let mut out_str_index = 0;
-        for ist in self.ictx.streams() {
+        for ist in ictx.streams() {
             let in_str_index = ist.index();
             let in_str_medium = ist.parameters().medium();
             // rule out unsupported streams
@@ -110,7 +102,7 @@ impl Saw2 {
                     in_str_index,
                     Transcoder::new(
                         &ist,
-                        &mut self.octx,
+                        &mut octx,
                         out_str_index as _,
                         Some(in_str_index) == best_video_stream_index,
                     )
@@ -118,10 +110,7 @@ impl Saw2 {
                 );
             } else {
                 // Set up for stream copy for non-video stream.
-                let mut ost = self
-                    .octx
-                    .add_stream(encoder::find(codec::Id::None))
-                    .unwrap();
+                let mut ost = octx.add_stream(encoder::find(codec::Id::None)).unwrap();
                 ost.set_parameters(ist.parameters());
                 // We need to set codec_tag to 0 lest we run into incompatible codec tag
                 // issues when muxing into a different container format. Unfortunately
@@ -133,13 +122,30 @@ impl Saw2 {
             out_str_index += 1;
         }
 
-        self.octx.set_metadata(self.ictx.metadata().to_owned());
+        octx.set_metadata(ictx.metadata().to_owned());
         // format::context::output::dump(&octx, 0, Some(&output_file));
-        self.octx.write_header().unwrap();
-
-        for (ost_index, _) in self.octx.streams().enumerate() {
-            out_str_time_bases[ost_index] = self.octx.stream(ost_index as _).unwrap().time_base();
+        octx.write_header().unwrap();
+        for (ost_index, _) in octx.streams().enumerate() {
+            out_str_time_bases[ost_index] = octx.stream(ost_index as _).unwrap().time_base();
         }
+        Saw2 {
+            ictx,
+            octx,
+            in_str_time_bases,
+            out_str_time_bases,
+            stream_mapping,
+            transcoders: transcoders,
+        }
+    }
+    fn finalize(&mut self) {
+        self.octx.write_trailer().unwrap();
+    }
+
+    fn reencode_between_timestamps(
+        &mut self,
+        start: f64,
+        end: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
 
         self.ictx
             .seek(start as i64, ..(start as i64))
@@ -148,7 +154,7 @@ impl Saw2 {
         let mut first_dts: Vec<Option<i64>> = vec![None; self.ictx.streams().len()];
         for (stream, mut packet) in self.ictx.packets() {
             let ist_index = stream.index();
-            let ost_index = stream_mapping[ist_index];
+            let ost_index = self.stream_mapping[ist_index];
             if ost_index < 0 {
                 continue;
             }
@@ -178,15 +184,15 @@ impl Saw2 {
             if let Some(dts) = packet.dts() {
                 packet.set_dts(Some(dts - *base));
             }
-            let ost_time_base = out_str_time_bases[ost_index as usize];
-            match transcoders.get_mut(&ist_index) {
+            let ost_time_base = self.out_str_time_bases[ost_index as usize];
+            match self.transcoders.get_mut(&ist_index) {
                 Some(transcoder) => {
                     transcoder.send_packet_to_decoder(&packet);
                     transcoder.receive_and_process_decoded_frames(&mut self.octx, ost_time_base);
                 }
                 None => {
                     // Do stream copy on non-video streams.
-                    packet.rescale_ts(in_str_time_bases[ist_index], ost_time_base);
+                    packet.rescale_ts(self.in_str_time_bases[ist_index], ost_time_base);
                     packet.set_position(-1);
                     packet.set_stream(ost_index as _);
                     packet.write_interleaved(&mut self.octx).unwrap();
@@ -195,8 +201,8 @@ impl Saw2 {
         }
 
         // Flush encoders and decoders.
-        for (ost_index, transcoder) in transcoders.iter_mut() {
-            let ost_time_base = out_str_time_bases[*ost_index];
+        for (ost_index, transcoder) in self.transcoders.iter_mut() {
+            let ost_time_base = self.out_str_time_bases[*ost_index];
             transcoder.send_eof_to_decoder();
             transcoder.receive_and_process_decoded_frames(&mut self.octx, ost_time_base);
             transcoder.send_eof_to_encoder();
