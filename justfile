@@ -1,6 +1,6 @@
 input := "/Users/oilcake/code/voop/smart_cut/samples/jt.mp4"
 output := "/Users/oilcake/code/voop/smart_cut/output/cropped.mp4"
-start := "0"
+start := "1.11"
 end := "3.99"
 
 try:

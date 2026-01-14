@@ -22,9 +22,6 @@ use std::time::Instant;
 use ffmpeg::{
     codec, decoder, encoder, format, frame, picture, Packet, Rational,
 };
-use ffmpeg_next::Dictionary;
-
-pub(crate) const DEFAULT_X264_OPTS: &str = "preset=medium";
 
 pub(crate) struct Transcoder {
     ost_index: usize,
@@ -151,16 +148,4 @@ impl Transcoder {
         self.last_log_frame_count = self.frame_count;
         self.last_log_time = Instant::now();
     }
-}
-
-pub fn parse_opts<'a>(s: String) -> Option<Dictionary<'a>> {
-    let mut dict = Dictionary::new();
-    for keyval in s.split_terminator(',') {
-        let tokens: Vec<&str> = keyval.split('=').collect();
-        match tokens[..] {
-            [key, val] => dict.set(key, val),
-            _ => return None,
-        }
-    }
-    Some(dict)
 }

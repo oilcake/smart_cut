@@ -86,30 +86,33 @@ impl Saw2 {
             .best(media::Type::Video)
             .map(|stream| stream.index());
         let mut stream_mapping: Vec<isize> = vec![0; self.ictx.nb_streams() as _];
-        let mut ist_time_bases = vec![Rational(0, 0); self.ictx.nb_streams() as _];
-        let mut ost_time_bases = vec![Rational(0, 0); self.ictx.nb_streams() as _];
+        let mut in_str_time_bases = vec![Rational(0, 0); self.ictx.nb_streams() as _];
+        let mut out_str_time_bases = vec![Rational(0, 0); self.ictx.nb_streams() as _];
         let mut transcoders = HashMap::new();
-        let mut ost_index = 0;
-        for (ist_index, ist) in self.ictx.streams().enumerate() {
-            let ist_medium = ist.parameters().medium();
-            if ist_medium != media::Type::Audio
-                && ist_medium != media::Type::Video
-                && ist_medium != media::Type::Subtitle
+        let mut out_str_index = 0;
+        for ist in self.ictx.streams() {
+            let in_str_index = ist.index();
+            let in_str_medium = ist.parameters().medium();
+            // rule out unsupported streams
+            if in_str_medium != media::Type::Audio
+                && in_str_medium != media::Type::Video
+                && in_str_medium != media::Type::Subtitle
             {
-                stream_mapping[ist_index] = -1;
+                stream_mapping[in_str_index] = -1;
                 continue;
             }
-            stream_mapping[ist_index] = ost_index;
-            ist_time_bases[ist_index] = ist.time_base();
-            if ist_medium == media::Type::Video {
+            // if stream type is supported
+            stream_mapping[in_str_index] = out_str_index;
+            in_str_time_bases[in_str_index] = ist.time_base();
+            if in_str_medium == media::Type::Video {
                 // Initialize transcoder for video stream.
                 transcoders.insert(
-                    ist_index,
+                    in_str_index,
                     Transcoder::new(
                         &ist,
                         &mut self.octx,
-                        ost_index as _,
-                        Some(ist_index) == best_video_stream_index,
+                        out_str_index as _,
+                        Some(in_str_index) == best_video_stream_index,
                     )
                     .unwrap(),
                 );
@@ -127,7 +130,7 @@ impl Saw2 {
                     (*ost.parameters().as_mut_ptr()).codec_tag = 0;
                 }
             }
-            ost_index += 1;
+            out_str_index += 1;
         }
 
         self.octx.set_metadata(self.ictx.metadata().to_owned());
@@ -135,7 +138,7 @@ impl Saw2 {
         self.octx.write_header().unwrap();
 
         for (ost_index, _) in self.octx.streams().enumerate() {
-            ost_time_bases[ost_index] = self.octx.stream(ost_index as _).unwrap().time_base();
+            out_str_time_bases[ost_index] = self.octx.stream(ost_index as _).unwrap().time_base();
         }
 
         self.ictx
@@ -175,7 +178,7 @@ impl Saw2 {
             if let Some(dts) = packet.dts() {
                 packet.set_dts(Some(dts - *base));
             }
-            let ost_time_base = ost_time_bases[ost_index as usize];
+            let ost_time_base = out_str_time_bases[ost_index as usize];
             match transcoders.get_mut(&ist_index) {
                 Some(transcoder) => {
                     transcoder.send_packet_to_decoder(&packet);
@@ -183,7 +186,7 @@ impl Saw2 {
                 }
                 None => {
                     // Do stream copy on non-video streams.
-                    packet.rescale_ts(ist_time_bases[ist_index], ost_time_base);
+                    packet.rescale_ts(in_str_time_bases[ist_index], ost_time_base);
                     packet.set_position(-1);
                     packet.set_stream(ost_index as _);
                     packet.write_interleaved(&mut self.octx).unwrap();
@@ -193,7 +196,7 @@ impl Saw2 {
 
         // Flush encoders and decoders.
         for (ost_index, transcoder) in transcoders.iter_mut() {
-            let ost_time_base = ost_time_bases[*ost_index];
+            let ost_time_base = out_str_time_bases[*ost_index];
             transcoder.send_eof_to_decoder();
             transcoder.receive_and_process_decoded_frames(&mut self.octx, ost_time_base);
             transcoder.send_eof_to_encoder();
