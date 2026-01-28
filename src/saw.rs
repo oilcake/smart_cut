@@ -8,10 +8,6 @@ use ffmpeg_next::{
     Error,
 };
 
-enum Direction {
-    Forward,
-    Backward,
-}
 #[derive(Debug)]
 struct Fragment {
     start: i64,
@@ -84,91 +80,21 @@ impl Saw {
         })
     }
 
-    /// Main function that does everything
-    pub fn saw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // if let Some(first_kf) = self.first_kf {
-        //     reencode_between_timestamps(self.start, first_kf, &mut self.ictx, &mut self.octx)?;
-        // }
-        if self.first_kf.is_some() && self.last_kf.is_some() {
-            self.copy_packets_between_keyframes()?;
-        }
-        // if let Some(last_kf) = self.last_kf {
-        //     self.reencode_between_timestamps(last_kf, self.end).unwrap();
-        // }
-        self.octx.write_trailer()?;
-        Ok(())
-    }
+    // /// Main function that does everything
+    // pub fn saw(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    //     // if let Some(first_kf) = self.first_kf {
+    //     //     reencode_between_timestamps(self.start, first_kf, &mut self.ictx, &mut self.octx)?;
+    //     // }
+    //     if self.first_kf.is_some() && self.last_kf.is_some() {
+    //         self.copy_packets_between_keyframes()?;
+    //     }
+    //     // if let Some(last_kf) = self.last_kf {
+    //     //     self.reencode_between_timestamps(last_kf, self.end).unwrap();
+    //     // }
+    //     self.octx.write_trailer()?;
+    //     Ok(())
+    // }
 
-    /// Fills first_kf and last_kf during initialization
-    pub fn seek(&mut self) -> Result<(), Error> {
-        self.first_kf =
-            self.find_closest_keyframe_inside_boundaries(self.start, Direction::Forward)?;
-        if self.first_kf.is_none() {
-            // that means we don't have keyframes in given range at all
-            // both are ok to be left as None
-            return Ok(());
-        }
-        if let Some(last_kf) =
-            self.find_closest_keyframe_inside_boundaries(self.end, Direction::Backward)?
-        {
-            // unwrap is safe because the value is checked above
-            if last_kf != self.first_kf.unwrap() {
-                self.last_kf = Some(last_kf)
-            }
-        }
-        Ok(())
-    }
-
-    /// Does actual work in keyframe seeking
-    fn find_closest_keyframe_inside_boundaries(
-        &mut self,
-        target_time_seconds: f64,
-        direction: Direction,
-    ) -> Result<Option<f64>, Error> {
-        let stream = self
-            .ictx
-            .streams()
-            .best(Type::Video)
-            .ok_or(ffmpeg::Error::StreamNotFound)?;
-
-        let time_base = stream.time_base();
-        let stream_index = stream.index();
-
-        // Convert target time to stream time base units
-        let target_ts = (target_time_seconds / f64::from(time_base)) as i64;
-
-        let direction = match direction {
-            Direction::Forward => ffmpeg::ffi::AVSEEK_FLAG_FRAME,
-            Direction::Backward => ffmpeg::ffi::AVSEEK_FLAG_BACKWARD,
-        };
-        // Seek to nearest keyframe BEFORE or AT target_ts
-        unsafe {
-            ffmpeg::ffi::av_seek_frame(
-                self.ictx.as_mut_ptr(),
-                stream_index as i32,
-                target_ts,
-                direction,
-            );
-        }
-
-        // Read packets forward until we find the first keyframe
-        for (stream, packet) in self.ictx.packets() {
-            if stream.index() != stream_index {
-                continue;
-            }
-
-            if packet.is_key() {
-                let ts = packet.pts().or_else(|| packet.dts()).unwrap();
-                let keyframe_time = (ts as f64) * f64::from(time_base);
-                return Ok(Some(keyframe_time));
-            }
-        }
-
-        unsafe {
-            ffmpeg::ffi::avformat_flush(self.ictx.as_mut_ptr());
-        }
-        Ok(None)
-    }
 
     /// Copies packets between first and last keyframe, that's the lossless part
     pub fn copy_packets_between_keyframes(&mut self) -> Result<(), ffmpeg::Error> {
